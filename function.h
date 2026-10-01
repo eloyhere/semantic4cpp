@@ -1,4 +1,7 @@
 ﻿#pragma once
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <random>
 #include <functional>
@@ -102,7 +105,7 @@ namespace function {
     template<typename Number>
     inline Number snap(Number value, Number tolerance = Number(1e-4)) noexcept {
         if constexpr (std::is_integral_v<Number>) {
-            return value+tolerance*0;
+            return value + tolerance * 0;
         }
         else if constexpr (std::is_floating_point_v<Number>) {
             constexpr int maximumDecimalDigits = 17;
@@ -120,8 +123,23 @@ namespace function {
             const bool isNegative = std::signbit(value);
             const long double absoluteValue =
                 std::fabs(static_cast<long double>(value));
-            const long double absoluteTolerance =
+            const long double userTolerance =
                 static_cast<long double>(tolerance);
+
+            long double binaryUlp = 0.0L;
+            {
+                int exponent = 0;
+                std::frexp(absoluteValue, &exponent);
+                constexpr int significandBits =
+                    std::numeric_limits<Number>::digits - 1;
+                binaryUlp = std::ldexp(1.0L, exponent - 1 - significandBits);
+                if (binaryUlp == 0.0L || !std::isfinite(binaryUlp)) {
+                    binaryUlp = std::numeric_limits<Number>::denorm_min();
+                }
+            }
+
+            const long double absoluteTolerance =
+                userTolerance > binaryUlp ? userTolerance : binaryUlp;
 
             int decimalExponent =
                 static_cast<int>(std::floor(std::log10(absoluteValue)));
@@ -138,23 +156,40 @@ namespace function {
                 }
             }
 
+            auto parseDecimal = [](const char* text) -> Number {
+                if constexpr (std::is_same_v<Number, float>) {
+                    return std::strtof(text, nullptr);
+                }
+                else if constexpr (std::is_same_v<Number, long double>) {
+                    return std::strtold(text, nullptr);
+                }
+                else {
+                    return static_cast<Number>(std::strtod(text, nullptr));
+                }
+                };
+
             auto tryWithDigits = [&](int digitCount, Number& result) -> bool {
-                const int powerOfTen = decimalExponent - digitCount + 1;
-                if (powerOfTen < -400 || powerOfTen > 400) {
+                if (digitCount < 1 || digitCount > maximumDecimalDigits) {
                     return false;
                 }
 
-                const long double step = std::pow(10.0L, powerOfTen);
-                if (step == 0.0L || !std::isfinite(step)) {
+                char buffer[64];
+                const int written = std::snprintf(
+                    buffer, sizeof(buffer), "%.*Le",
+                    digitCount - 1, absoluteValue);
+                if (written < 0 || written >= static_cast<int>(sizeof(buffer))) {
                     return false;
                 }
 
-                const long double quotient = std::round(absoluteValue / step);
-                const long double candidateAbsolute = quotient * step;
+                const Number candidateAbsolute = parseDecimal(buffer);
+                if (!std::isfinite(static_cast<long double>(candidateAbsolute))) {
+                    return false;
+                }
 
-                if (std::fabs(candidateAbsolute - absoluteValue) <= absoluteTolerance) {
-                    const Number candidate = static_cast<Number>(candidateAbsolute);
-                    result = isNegative ? -candidate : candidate;
+                const long double candidateLongDouble =
+                    static_cast<long double>(candidateAbsolute);
+                if (std::fabs(candidateLongDouble - absoluteValue) <= absoluteTolerance) {
+                    result = isNegative ? -candidateAbsolute : candidateAbsolute;
                     return true;
                 }
                 return false;
