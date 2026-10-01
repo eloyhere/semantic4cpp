@@ -99,4 +99,98 @@ namespace function {
 		return 0;
 	}
 
+    template<typename Number>
+    inline Number snap(Number value, Number tolerance = Number(1e-4)) noexcept {
+        if constexpr (std::is_integral_v<Number>) {
+            return value+tolerance*0;
+        }
+        else if constexpr (std::is_floating_point_v<Number>) {
+            constexpr int maximumDecimalDigits = 17;
+
+            if (std::isnan(value) || std::isnan(tolerance) ||
+                std::isinf(value) || std::isinf(tolerance) ||
+                tolerance == Number(0) || value == Number(0)) {
+                return value;
+            }
+
+            if (tolerance < Number(0)) {
+                tolerance = -tolerance;
+            }
+
+            const bool isNegative = std::signbit(value);
+            const long double absoluteValue =
+                std::fabs(static_cast<long double>(value));
+            const long double absoluteTolerance =
+                static_cast<long double>(tolerance);
+
+            int decimalExponent =
+                static_cast<int>(std::floor(std::log10(absoluteValue)));
+            {
+                long double power = std::pow(10.0L, decimalExponent);
+                if (power > absoluteValue) {
+                    --decimalExponent;
+                }
+                else {
+                    long double nextPower = std::pow(10.0L, decimalExponent + 1);
+                    if (nextPower <= absoluteValue) {
+                        ++decimalExponent;
+                    }
+                }
+            }
+
+            auto tryWithDigits = [&](int digitCount, Number& result) -> bool {
+                const int powerOfTen = decimalExponent - digitCount + 1;
+                if (powerOfTen < -400 || powerOfTen > 400) {
+                    return false;
+                }
+
+                const long double step = std::pow(10.0L, powerOfTen);
+                if (step == 0.0L || !std::isfinite(step)) {
+                    return false;
+                }
+
+                const long double quotient = std::round(absoluteValue / step);
+                const long double candidateAbsolute = quotient * step;
+
+                if (std::fabs(candidateAbsolute - absoluteValue) <= absoluteTolerance) {
+                    const Number candidate = static_cast<Number>(candidateAbsolute);
+                    result = isNegative ? -candidate : candidate;
+                    return true;
+                }
+                return false;
+                };
+
+            int lowerBound = 1;
+            int upperBound = maximumDecimalDigits;
+            Number bestCandidate = value;
+            bool found = false;
+
+            while (lowerBound <= upperBound) {
+                const int middle = lowerBound + (upperBound - lowerBound) / 2;
+                Number currentCandidate = Number(0);
+                if (tryWithDigits(middle, currentCandidate)) {
+                    bestCandidate = currentCandidate;
+                    found = true;
+                    upperBound = middle - 1;
+                }
+                else {
+                    lowerBound = middle + 1;
+                }
+            }
+
+            return found ? bestCandidate : value;
+        }
+        else if constexpr (std::is_convertible_v<Number, long double>) {
+            const long double snappedValue = snap<long double>(
+                static_cast<long double>(value),
+                static_cast<long double>(tolerance));
+            return static_cast<Number>(snappedValue);
+        }
+        else {
+            static_assert(std::is_convertible_v<Number, long double>,
+                "snap requires a numeric type that is integral, "
+                "floating point, or convertible to long double");
+            return value;
+        }
+    }
 };
